@@ -44,7 +44,7 @@ class pidMotor():
         self.integral = 0
         self.derivativa = 0 
     
-    def updateError(self, valorAtual):
+    async def updateError(self, valorAtual):
         """
         Calcula o sinal de controle baseado no erro atual.
 
@@ -62,13 +62,12 @@ class pidMotor():
 
         return controlSignal
 
-    def andar(self, aceleracao=100, rotacao=0, velocidadeMax=1000):
+    async def andar(self, aceleracao=100, velocidadeMax=1000):
         """
         Função utiliada para fazer o robô andar reto com o uso do PID
 
         Parâmetros:
         - aceeleracao = a aceleração do motor em graus/s² (segundos quadrados)
-        - rotacao: Quantas rotações o motor deve ser executada
         - velocidadeMax: Velocidade máxima que o PID pode atingir, velocidade máxima: 1000º/s² (velocidade positiva -> andar para frente, velocidade negativa -> andar para trás)
         """
         motor.reset_relative_position(port=port.A, position=0)
@@ -76,7 +75,7 @@ class pidMotor():
         ajusteMotorA = self.updateError(valorAtual=motor.relative_position(port.A))
         ajusteMotorE = self.updateError(valorAtual=motor.relative_position(port.E))
 
-        while motor.relative_position(port.A) != (rotacao * 360) or motor.relative_position(port.E) != (rotacao * 360):
+        while motor.relative_position(port.A) != (self.setpoint * 360) or motor.relative_position(port.E) != (self.setpoint * 360):
             # Atualiza o ajuste do motor
             ajusteMotorA = self.updateError(valorAtual=motor.relative_position(port.A))
             ajusteMotorE = self.updateError(valorAtual=motor.relative_position(port.E))
@@ -96,13 +95,12 @@ class pidMotor():
             motor_pair.move_tank(pair=motor_pair.PAIR_1, left_velocity=ajusteMotorE, right_velocity=ajusteMotorA, acceleration=aceleracao)
         motor_pair.stop(pair=motor_pair.PAIR_1)
     
-    def moverEngrenagem(self, aceleracao=100, rotacao=0, velocidadeMax = 1000):
+    async def moverEngrenagem(self, aceleracao=100, velocidadeMax = 1000):
         """
         Função utiliada para controlar os motores de engrenagem com o uso do PID
 
         Parâmetros:
         - aceeleracao: A aceleração do motor em graus/s² (segundos quadrados)
-        - rotacao: Quantas rotações o motor deve ser executada
         - velocidadeMax: Velocidade máxima que o PID pode atingir, velocidade máxima: 1000º/s (velocidade positiva -> andar para frente, velocidade negativa -> andar para trás)
         """
         motor.reset_relative_position(port=port.C, position=0)
@@ -110,7 +108,7 @@ class pidMotor():
         ajusteMotorC = self.updateError(motor.relative_position(port.C))
         ajusteMotorD = self.updateError(motor.relative_position(port.D))
 
-        while motor.relative_position(port.C) != (rotacao * 360) or motor.relative_position(port.D) != (rotacao * 360):
+        while motor.relative_position(port.C) != (self.setpoint * 360) or motor.relative_position(port.D) != (self.setpoint * 360):
             ajusteMotorC = self.updateError(motor.relative_position(port.C))
             ajusteMotorD = self.updateError(motor.relative_position(port.D))
 
@@ -151,7 +149,7 @@ class pidGiroscopio():
         self.integral = 0
         self.derivativa = 0
     
-    def updateError(self, valorAtual):
+    async def updateError(self, valorAtual):
         """
         Calcula o sinal de controle baseado no erro atual.
 
@@ -169,7 +167,7 @@ class pidGiroscopio():
 
         return controlSignal
 
-    def curvar(self, aceleracao, velocidadeCurva):
+    async def curvar(self, aceleracao, velocidadeCurva):
         """
         Função utilizada para implementar o uso do PID para curvas usando giroscópio
 
@@ -194,4 +192,9 @@ class pidGiroscopio():
 
 comandosInicias()
 controlePidMotor = pidMotor(kp=0.1, kd=0.2, ki=0.3, setpoint=0.4)
-pidMotor.andar(aceleracao=100,rotacao=100)
+controlePidGiroscopio = pidGiroscopio(kp=1, kd=1, ki=1, setpoint=90)
+
+await controlePidMotor.andar(aceleracao=100)
+controlePidMotor = pidMotor(kp=0.1, kd=0.2, ki=0.3, setpoint=2)
+await controlePidMotor.moverEngrenagem(aceleracao=50, velocidadeMax=1000)
+await controlePidGiroscopio
