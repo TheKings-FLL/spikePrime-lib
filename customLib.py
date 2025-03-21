@@ -1,200 +1,139 @@
+import hub
 import motor
 import motor_pair
 import runloop
-from hub import port, motion_sensor
+from time import sleep, ticks_ms
 
-def comandosInicias():
-    """
-    Função utilizada para definir comanos iniciais para o funcionamente do robô, como os pares de motores, por exemplo
-    """
-    motor_pair.pair(motor_pair.PAIR_1, port.A, port.E)
-    motor_pair.pair(motor_pair.PAIR_2, port.C, port.D)
+motor_pair.pair(motor_pair.PAIR_1, hub.port.A, hub.port.C)
 
-def reiniciarMotor(porta):
-    """
-    Função utilizada para levar o motor até a sua posição inicial (0)
+async def resetarMotor():
+    motor.run_to_absolute_position(hub.port.A, 0, 1000)
+    motor.run_to_absolute_position(hub.port.C, 0, 1000)
 
-    Parâmetros:
-    - motor: a porta que o motor está localizado (A, B, C, D, E, F)
-    """
-    try:
-        motor.run_to_absolute_position(port=port.str(porta).strip().upper(), acceleration=100, deceleration=100, velocity=1000)
-    except TypeError:
-        print("Porta digitada inválida")
+# andar
+async def moverTank(rotacaoA: float, rotacaoC: float, velocidadeA:int, velocidadeC: int, acel: int, desacel: int):
+    # Reseta os motores
+    motor.reset_relative_position(hub.port.A, 0)
+    motor.reset_relative_position(hub.port.C, 0)
 
-class pidMotor(): 
-    """
-    Classe para implementar o controle PID em motores.
+    # Inicia os motores
+    motor.run_for_degrees(hub.port.A, int((rotacaoA * -360)), velocidadeA, stop=motor.HOLD, acceleration=acel, deceleration=desacel)
+    await motor.run_for_degrees(hub.port.C, int((rotacaoC * 360)), velocidadeC, stop=motor.HOLD, acceleration=acel, deceleration=desacel)
 
-    Parâmetros:
-    - kp: Ganho proporcional
-    - ki: Ganho integral
-    - kd: Ganho derivativo
-    - setpoint: Valor alvo do motor
-    - lastError: Último erro
-    - integral: Soma de todos os erros para o termo integral
-    - derivativa: Variação do erro para o termo derivativo
-    """
-    def __init__(self, kp, kd, ki, setpoint):
+async def andarReto(rotacao: float, velocidade: int, acel: int, desacel: int):
+    # Reseta os motores
+    motor.reset_relative_position(hub.port.A, 0)
+    motor.reset_relative_position(hub.port.C, 0)
+
+    # Inicia os motores
+    await motor_pair.move_tank_for_degrees(motor_pair.PAIR_1, -int((rotacao * -360)), velocidade, velocidade, stop=motor.HOLD, acceleration=acel, deceleration=desacel)
+
+# Valores: kp: 0.3
+# Valores: ki = 0.003
+# Valores: kd = 0
+class controlePID:
+    def __init__(self, kp, ki, kd):
+        # Variaveis usada no PID
         self.kp = kp
-        self.kd = kd
         self.ki = ki
-        self.setpoint = setpoint
-        self.lastError = 0
-        self.integral = 0
-        self.derivativa = 0 
-    
-    async def updateError(self, valorAtual):
-        """
-        Calcula o sinal de controle baseado no erro atual.
-
-        Parâmetros:
-        - valorAtual: A angulação atual do motor
-
-        Retorna:
-        - controlSignal: A correção que deve ser feita no motor
-        """
-        erro = self.setpoint - valorAtual
-        self.integral += erro # calcula o erro total
-        self.derivativa = erro  - self.lastError
-        controlSignal = (self.kp * erro) + (self.ki * self.integral) + (self.kd * self.derivativa)
-        self.lastError = erro
-
-        return controlSignal
-
-    async def andar(self, aceleracao=100, velocidadeMax=1000):
-        """
-        Função utiliada para fazer o robô andar reto com o uso do PID
-
-        Parâmetros:
-        - aceeleracao = a aceleração do motor em graus/s² (segundos quadrados)
-        - velocidadeMax: Velocidade máxima que o PID pode atingir, velocidade máxima: 1000º/s² (velocidade positiva -> andar para frente, velocidade negativa -> andar para trás)
-        """
-        motor.reset_relative_position(port=port.A, position=0)
-        motor.reset_relative_position(port=port.E, position=0)
-        ajusteMotorA = self.updateError(valorAtual=motor.relative_position(port.A))
-        ajusteMotorE = self.updateError(valorAtual=motor.relative_position(port.E))
-
-        while motor.relative_position(port.A) != (self.setpoint * 360) or motor.relative_position(port.E) != (self.setpoint * 360):
-            # Atualiza o ajuste do motor
-            ajusteMotorA = self.updateError(valorAtual=motor.relative_position(port.A))
-            ajusteMotorE = self.updateError(valorAtual=motor.relative_position(port.E))
-
-            # Limita a velocidade máxima do PID para o motor A
-            if ajusteMotorA > abs(velocidadeMax):
-                ajusteMotorA = velocidadeMax
-            elif ajusteMotorA < -abs(velocidadeMax):
-                ajusteMotorA = -abs(velocidadeMax)
-            
-            # Limita a velocidade máxima do PID para o motor E
-            if ajusteMotorE > abs(velocidadeMax):
-                ajusteMotorE = velocidadeMax
-            elif ajusteMotorE < -abs(velocidadeMax):
-                ajusteMotorE = -abs(velocidadeMax)
-            
-            motor_pair.move_tank(pair=motor_pair.PAIR_1, left_velocity=ajusteMotorE, right_velocity=ajusteMotorA, acceleration=aceleracao)
-        motor_pair.stop(pair=motor_pair.PAIR_1)
-    
-    async def moverEngrenagem(self, aceleracao=100, velocidadeMax = 1000):
-        """
-        Função utiliada para controlar os motores de engrenagem com o uso do PID
-
-        Parâmetros:
-        - aceeleracao: A aceleração do motor em graus/s² (segundos quadrados)
-        - velocidadeMax: Velocidade máxima que o PID pode atingir, velocidade máxima: 1000º/s (velocidade positiva -> andar para frente, velocidade negativa -> andar para trás)
-        """
-        motor.reset_relative_position(port=port.C, position=0)
-        motor.reset_relative_position(port=port.D, position=0)
-        ajusteMotorC = self.updateError(motor.relative_position(port.C))
-        ajusteMotorD = self.updateError(motor.relative_position(port.D))
-
-        while motor.relative_position(port.C) != (self.setpoint * 360) or motor.relative_position(port.D) != (self.setpoint * 360):
-            ajusteMotorC = self.updateError(motor.relative_position(port.C))
-            ajusteMotorD = self.updateError(motor.relative_position(port.D))
-
-            # Limita a velocidade máxima do PID para o motor C
-            if ajusteMotorC > abs(velocidadeMax):
-                ajusteMotorC = velocidadeMax
-            elif ajusteMotorC < -abs(velocidadeMax):
-                ajusteMotorC = -abs(velocidadeMax)
-            
-            # Limita a velocidade máxima do PID para o motor D
-            if ajusteMotorD > abs(velocidadeMax):
-                ajusteMotorD = velocidadeMax
-            elif ajusteMotorD < -abs(velocidadeMax):
-                ajusteMotorD = -abs(velocidadeMax)
-            
-            motor_pair.move_tank(pair=motor_pair.PAIR_2, left_velocity=ajusteMotorC, right_velocity=ajusteMotorD, acceleration=aceleracao)
-        motor_pair.stop(pair=motor_pair.PAIR_2)
-
-class pidGiroscopio():
-    """
-    Classe para implementar o controle PID no giroscópio.
-
-    Parâmetros:
-    - kp: Ganho proporcional
-    - ki: Ganho integral
-    - kd: Ganho derivativo
-    - setpoint: Valor alvo do motor
-    - lastError: Último erro
-    - integral: Soma de todos os erros para o termo integral
-    - derivativa: Variação do erro para o termo derivativo
-    """
-    def __init__(self, kp, kd, ki, setpoint):
-        self.kp = kp
         self.kd = kd
-        self.ki = ki
-        self.setpoint = setpoint
-        self.lastError = 0
-        self.integral = 0
-        self.derivativa = 0
-    
-    async def updateError(self, valorAtual):
-        """
-        Calcula o sinal de controle baseado no erro atual.
+        self.PID_error = 0
+        self.previous_error = 0
+        self.PID_value = 0
+        self.PID_p = 0
+        self.PID_i = 0
+        self.PID_d = 0
+        self.elapsedTime = 0
+        self.Time = 0
+        self.timePrev = 0
 
-        Parâmetros:
-        - valorAtual: A angulação atual do giroscópio
+    def calcula_saida_pid(self, ideal:int, real:int):
+        # Define as varaiveis como globais
+        global PID_p
+        global PID_i
+        global PID_d
+        global Time
 
-        Retorna:
-        - controlSignal: A correção que deve ser feita no motor
-        """
-        erro = self.setpoint - valorAtual
-        self.integral += erro
-        self.derivativa = erro - self.lastError
-        controlSignal = (self.kp * erro) + (self.ki * self.integral) + (self.kd * self.derivativa)
-        self.lastError = erro
+        # Next we calculate the error between the setpoint and the real value
+        self.PID_error = ideal - real;
+        # Calculate the P value
+        self.PID_p = 0.01*self.kp * self.PID_error;
+        # Calculate the I value in a range on +-6
+        self.PID_i = 0.01 * self.PID_i + (self.ki * self.PID_error);
 
-        return controlSignal
+        # For derivative we need real time to calculate speed change rate
+        self.timePrev = self.Time;                            #the previous time is stored before the actual time read
+        self.Time = ticks_ms();                            #actual time read
+        self.elapsedTime = (self.Time - self.timePrev) / 1000;
+        # Now we can calculate the D calue
+        self.PID_d = 0.01*self.kd*((self.PID_error - self.previous_error)/self.elapsedTime);
+        # Final total PID value is the sum of P + I + D
+        self.PID_value = self.PID_p + self.PID_i + self.PID_d;
 
-    async def curvar(self, aceleracao, velocidadeCurva):
-        """
-        Função utilizada para implementar o uso do PID para curvas usando giroscópio
+        # We define PWM range between 0 and 255
+        if(self.PID_value < -1):
+            self.PID_value = -1;
 
-        Parâmetros:
-        - aceleracao = A aceleração do motor em graus/s² (segundo quadrado)
-        - velocidadeCurva: A velocidade deseja na curva, de 0 a 1000 graus por segundo
-        """
+        if(self.PID_value > 1):
+            self.PID_value = 1;
 
-        # Reinicia o sensor giroscópio
-        motion_sensor.reset_yaw()
+        if self.PID_value >-0.01 and self.PID_value < 0.01:
+            self.PID_value = 0
 
-        # Atualiza os valores do PID
-        anguloAtual = motion_sensor.tilt_angles()
-        anguloAtualFiltrado = anguloAtual[1]
-        velocidade = self.updateError(anguloAtualFiltrado)
+        return self.PID_value;
 
-        while self.setpoint != anguloAtualFiltrado:
-            anguloAtual = motion_sensor.tilt_angles()
-            anguloAtualFiltrado = anguloAtual[1]
-            velocidade = self.updateError(anguloAtualFiltrado)
-            motor_pair.move_tank(pair=motor_pair.PAIR_1 ,acceleration=aceleracao, left_velocity=velocidade * velocidadeCurva, right_velocity=-velocidade * velocidadeCurva)
+    async def curvar(self, graus: int):
+        # Reseta os motores
+        motor.reset_relative_position(hub.port.A, 0)
+        motor.reset_relative_position(hub.port.C, 0)
 
-comandosInicias()
-controlePidMotor = pidMotor(kp=0.1, kd=0.2, ki=0.3, setpoint=0.4)
-controlePidGiroscopio = pidGiroscopio(kp=1, kd=1, ki=1, setpoint=90)
+        #reseta o yaw
+        hub.motion_sensor.reset_yaw(0)
 
-await controlePidMotor.andar(aceleracao=100)
-controlePidMotor = pidMotor(kp=0.1, kd=0.2, ki=0.3, setpoint=2)
-await controlePidMotor.moverEngrenagem(aceleracao=50, velocidadeMax=1000)
-await controlePidGiroscopio
+        while True:
+            tiltangles = hub.motion_sensor.tilt_angles()
+            yaw = tiltangles[0] / 10
+
+            if yaw>=(graus-2) and yaw <=(graus+2):
+                break
+
+            pid_calculado = self.calcula_saida_pid(graus, int(yaw))
+
+            # Inicia os motores
+            motor.run_for_degrees(hub.port.A, int(pid_calculado * 360), abs(int(pid_calculado*500)), stop=motor.HOLD, acceleration=1000, deceleration=1000)
+            await motor.run_for_degrees(hub.port.C, int(pid_calculado * 360), abs(int(pid_calculado*500)), stop=motor.HOLD, acceleration=1000, deceleration=1000)
+
+    async def andar_curvando(self):
+        # Reseta os motores
+        motor.reset_relative_position(hub.port.A, 0)
+        motor.reset_relative_position(hub.port.C, 0)
+        
+        pid_calculado=0
+
+        #reseta o yaw
+        hub.motion_sensor.reset_yaw(0)
+        for i in range(0, 5):
+            motor.run_for_degrees(hub.port.C, -72, int(1000 / 5) , stop=motor.HOLD, acceleration=1000, deceleration=1000)
+            print(hub.motion_sensor.tilt_angles()[0])
+            while True:
+                tiltangles = hub.motion_sensor.tilt_angles()
+                yaw = tiltangles[0] / 10
+                if yaw>=(18-2) and yaw <=(30+2) and i == 0: break
+                elif yaw>=(36-2) and yaw <=(60+2) and i == 1: break
+                elif yaw>=(54-2) and yaw <=(90+2) and i == 2: break
+                elif yaw>=(72-2) and yaw <=(90+2) and i == 3: break
+                elif yaw>=(90-2) and yaw <=(90+2) and i == 4: break
+                        
+                if i==0: pid_calculado = self.calcula_saida_pid(18, int(yaw))
+                elif i==1: pid_calculado = self.calcula_saida_pid(36, int(yaw))
+                elif i==2: pid_calculado = self.calcula_saida_pid(54, int(yaw))
+                elif i==3: pid_calculado = self.calcula_saida_pid(72, int(yaw))
+                elif i==4: pid_calculado = self.calcula_saida_pid(90, int(yaw))
+                # Inicia os motores
+                await motor.run_for_degrees(hub.port.A, int(pid_calculado * 360), abs(int(pid_calculado*1000)), stop=motor.HOLD, acceleration=1000, deceleration=1000)
+                sleep(0.0001)
+
+async def main():
+    Escreva o código aqui
+
+runloop.run(main())
